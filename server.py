@@ -43,12 +43,16 @@ def _limit_memory():
 def parse_plan(output):
     """Best-effort plan extraction.
 
-    The exact format printed by `pdkb.planner` may vary, so we stay liberal:
-    grab parenthesised action lines. The full `output` is always returned too,
-    so nothing is lost if this misses.
+    `pdkb.planner` prints the plan after a `--{ Plan }--` banner, one numbered
+    step per line: `1. (move_c_l1_l2)`. We scope to that section when present and
+    grab each action, tolerating the leading number; otherwise we fall back to
+    any bare parenthesised action lines. The full `output` is always returned
+    too, so nothing is lost if this misses.
     """
-    actions = re.findall(r"^\s*\(([^()\n]+)\)\s*$", output, re.MULTILINE)
-    return ["(%s)" % a.strip() for a in actions] if actions else []
+    marker = re.search(r"--\{\s*Plan\s*\}--", output)
+    section = output[marker.end():] if marker else output
+    actions = re.findall(r"^\s*(?:\d+\.\s*)?\(([^()\n]+)\)\s*$", section, re.MULTILINE)
+    return ["(%s)" % a.strip() for a in actions]
 
 
 def run_planner(pdkbddl_text):
