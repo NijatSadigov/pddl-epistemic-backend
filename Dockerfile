@@ -13,6 +13,9 @@ FROM ubuntu:18.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+# Use a UTF-8 locale so the planner can read inputs containing non-ASCII
+# characters (e.g. an em-dash in a comment) instead of failing under ASCII.
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=utf-8
 
 # Build tools (bison/flex/bc for the bundled planner) + python + graphviz stack.
 RUN apt-get update && apt-get install -y --no-install-recommends \

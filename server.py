@@ -54,7 +54,9 @@ def parse_plan(output):
 def run_planner(pdkbddl_text):
     workdir = tempfile.mkdtemp(prefix="solve-")
     path = os.path.join(workdir, "problem.pdkbddl")
-    with open(path, "w") as fh:
+    # Always UTF-8: the container locale may be ASCII, and inputs can contain
+    # non-ASCII (e.g. an em-dash in a comment).
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(pdkbddl_text)
 
     try:
