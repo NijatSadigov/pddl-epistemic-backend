@@ -1,40 +1,42 @@
-# PDDL Playground — Epistemic Solver Backend (Phase 2)
+# PDDL Playground — Solver Backend
 
-A small HTTP service that actually **solves multi-agent epistemic planning
-problems** for the PDDL Playground. It wraps Christian Muise's
-[`pdkb-planning`](https://github.com/QuMuLab/pdkb-planning) (RP-MEP): an
-epistemic problem written in **PDKBDDL** is *compiled to classical PDDL* and
-solved with the bundled **Fast Downward**.
+An HTTP service that provides two server-side planners for the PDDL Playground:
 
-This runs **separately** from the static Playground site — the Playground stays
-fully offline/client-side; this backend is an optional "epistemic mode" it can
-call over HTTP.
+- **Epistemic** — multi-agent epistemic planning. Wraps Christian Muise's
+  [`pdkb-planning`](https://github.com/QuMuLab/pdkb-planning) (RP-MEP): a problem
+  written in **PDKBDDL** is compiled to classical PDDL and solved with the
+  bundled **LAPKT BFWS** planner (`siw-then-bfsf`).
+- **Classical (full PDDL)** — a satisficing classical solve via the same bundled
+  BFWS planner. It accepts PDDL features the in-browser `pyperplan` engine does
+  not, including negative preconditions, conditional effects, and action costs.
 
-> ⚠️ **Heads-up:** this was built to run directly on your Linux server (no local
-> Ubuntu was available to pre-test it). It wraps research code, so **build and
-> run the self-test on the server first** (below) before wiring it to the live
-> site. The memory caps mean that even if a solve misbehaves, it dies on its own
-> — it can't take your website down.
+The service runs separately from the static Playground site. The Playground
+itself is fully client-side; this backend is an optional server-side solver that
+the frontend calls over HTTP.
 
-## What's here
+The service wraps research code and is intended to run inside its Docker
+container. Per-solve memory and time limits are enforced (see [Configuration](#configuration)),
+so a misbehaving solve is terminated rather than affecting the host.
+
+## Contents
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Builds `pdkb-planning` + Fast Downward on Ubuntu 18.04, pinned for Python 3.6. |
-| `server.py`  | Dependency-free HTTP API: `POST /solve`, `GET /health`. Per-solve memory + time limits, single-threaded queue, CORS. |
+| `Dockerfile` | Builds `pdkb-planning` (RP-MEP) and its bundled BFWS planner on Ubuntu 18.04, pinned for Python 3.6. |
+| `server.py`  | Dependency-free HTTP API: `POST /solve`, `POST /solve-classical`, `GET /health`. Per-solve memory and time limits, single-threaded queue, CORS. |
 
-## 1. Build
+## Build
 
 ```sh
 cd pddl-epistemic-backend
 docker build -t pdkb-epistemic .
 ```
 
-(First build is slow — it compiles the bundled planner. Needs internet.)
+The first build compiles the bundled planner and requires internet access.
 
-## 2. Self-test the planner BEFORE exposing the API
+## Self-test
 
-Confirm the planner itself works on a bundled example:
+Verify the planner runs on a bundled example before exposing the API:
 
 ```sh
 docker run --rm pdkb-epistemic bash -lc \
@@ -42,95 +44,133 @@ docker run --rm pdkb-epistemic bash -lc \
    echo "Solving $EX"; python3 -m pdkb.planner "$EX"'
 ```
 
-You should see the planner run and print a plan. If this works, the hard part is
-done.
+The planner should run and print a plan.
 
-## 3. Run the API (always with a memory cap)
+## Run
 
 ```sh
 docker run -d --name pdkb-epistemic \
   -p 127.0.0.1:8000:8000 \
   --memory=768m --memory-swap=768m \
   -e SOLVE_TIMEOUT=30 -e SOLVE_MEM_MB=600 \
-  -e CORS_ORIGIN=https://pddl.yourdomain.com \
+  -e CORS_ORIGIN=https://pddl.example.com \
   --restart unless-stopped \
   pdkb-epistemic
 ```
 
-- `--memory=768m` — hard cap for the whole container (protects the host).
-- `SOLVE_MEM_MB=600` — per-solve address-space cap (kept **below** the container
-  cap, so a heavy solve dies, not the server).
-- `SOLVE_TIMEOUT=30` — per-solve wall-clock limit (seconds).
-- `CORS_ORIGIN` — your Playground's origin (use the real URL in production; `*`
-  only for testing).
-- Binding to `127.0.0.1` keeps it private; expose it via your existing reverse
-  proxy (see below).
+Binding to `127.0.0.1` keeps the service private; expose it through a reverse
+proxy (see [Reverse proxy](#reverse-proxy)).
 
-### Test it
+### Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SOLVE_TIMEOUT` | `30` | Per-solve wall-clock limit (seconds). |
+| `SOLVE_MEM_MB` | `600` | Per-solve address-space cap (MB). Kept below the container memory cap so a heavy solve is terminated before the container is. |
+| `CORS_ORIGIN` | — | Allowed origin for browser requests. Set to the Playground origin in production; `*` for testing only. |
+| `CLASSICAL_PLANNER` | `/MEP/pdkb-planning/pdkb/planners/siw-then-bfsf` | Path to the bundled classical planner used by `/solve-classical`. |
+
+The container's `--memory` flag is a hard cap for the whole container and
+protects the host. `SOLVE_MEM_MB` is kept below it so an oversized solve is
+killed without taking down the service.
+
+### Health and solve
 
 ```sh
 curl http://127.0.0.1:8000/health
 # {"ok": true}
 
+# Epistemic (PDKBDDL)
 curl -s -X POST http://127.0.0.1:8000/solve \
   -H 'Content-Type: application/json' \
-  --data-binary '{"pdkbddl": "<paste a .pdkbddl problem here>"}'
+  --data-binary '{"pdkbddl": "<.pdkbddl problem>"}'
 # {"ok": true, "plan": [...], "output": "...", "returncode": 0}
+
+# Classical (full PDDL)
+curl -s -X POST http://127.0.0.1:8000/solve-classical \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"domain": "<domain pddl>", "problem": "<problem pddl>"}'
+# {"ok": true, "plan": [...], "stats": {...}, "output": "...", "returncode": 0}
 ```
 
-## 4. Put it behind Caddy (your portfolio already uses it)
+## Reverse proxy
+
+Example Caddy configuration:
 
 ```caddy
-epistemic.yourdomain.com {
+epistemic.example.com {
     reverse_proxy 127.0.0.1:8000
 }
 ```
 
-Caddy gives automatic HTTPS. Then point the Playground's epistemic mode at
-`https://epistemic.yourdomain.com` (frontend wiring is the next step — not done
-yet; see below).
+Caddy provisions HTTPS automatically. The Playground's epistemic mode is then
+built with `VITE_EPISTEMIC_API=https://epistemic.example.com`.
 
-## On the 2 GB box
+## Resource sizing
 
-Safe for small teaching problems (2–3 agents, low knowledge-nesting depth). The
-limits above are the safety net: a too-large problem returns
-`{"ok": false, "error": "timeout"}` or dies under the memory cap instead of
-OOM-ing your site. Keep solves serial (this server already does) and consider
-lowering `SOLVE_MEM_MB` if it competes with your main backend.
+The default limits suit small teaching problems (2–3 agents, low
+knowledge-nesting depth). An oversized problem returns
+`{"ok": false, "error": "timeout"}` or is terminated under the memory cap rather
+than exhausting host memory. Solves are processed serially. On a memory-
+constrained host, lower `SOLVE_MEM_MB` if the service competes with other
+workloads.
 
 ## API
 
-`POST /solve` — body `{"pdkbddl": "<text>"}` (max 256 KB). Returns:
+All request bodies are limited to 256 KB.
+
+### `POST /solve` — epistemic
+
+Body `{"pdkbddl": "<text>"}`. Compiles PDKBDDL to classical PDDL and solves it.
 
 ```json
 { "ok": true, "plan": ["(action …)", "…"], "output": "<raw planner output>", "returncode": 0 }
 ```
 
-`output` is always the raw planner text — if `plan` parsing ever misses (the
-exact print format of `pdkb.planner` may differ), the full output is still there
-to read and the parser in `server.py` can be tuned to match.
+### `POST /solve-classical` — full PDDL
 
-## Next step (frontend wiring — TODO)
+Body `{"domain": "<pddl>", "problem": "<pddl>"}`. Solves with the bundled BFWS
+planner.
 
-The Playground currently shows the epistemic *explainer* and disables solving.
-To connect this backend: add an optional `VITE_EPISTEMIC_API` URL to the
-Playground, and in epistemic mode `POST {pdkbddl}` to `/solve` and render the
-returned plan (clearly labelled "solved on the server", since it's
-network-dependent — the classical playground stays offline).
+```json
+{
+  "ok": true,
+  "plan": ["(ACTION ARGS)", "…"],
+  "stats": { "cost": 7, "nodesExpanded": 17, "nodesGenerated": 27, "totalTimeMs": 0.7 },
+  "output": "<raw planner output>",
+  "returncode": 0
+}
+```
 
-## Troubleshooting (since it wasn't pre-tested locally)
+When no plan is found, the response is `{"ok": false, "error": "no plan found …",
+"output": "…"}`.
+
+For both endpoints, `output` always contains the raw planner text. If plan
+parsing does not match a given planner print format, the full output remains
+available and the parser in `server.py` can be adjusted.
+
+### `GET /health`
+
+Returns `{"ok": true}`.
+
+## Troubleshooting
 
 - **Build fails on a `pip install`** — a pinned version may be unavailable for
-  your arch. The pins target Python 3.6 (Ubuntu 18.04); keep the base image at
-  `18.04`. As a fallback, the upstream
+  the target architecture. The pins target Python 3.6 (Ubuntu 18.04); keep the
+  base image at `18.04`. The upstream
   [official Dockerfile](https://github.com/QuMuLab/pdkb-planning/blob/master/Dockerfile)
-  is known-good; you can build that and add `server.py` on top.
-- **`pdkb.planner` import/runtime error** — likely a missing runtime dep
-  (`networkx` / `pygraphviz` / `graphviz`); all are installed here, but check the
-  self-test output.
-- **Self-test finds no `.pdkbddl`** — the examples come from a git submodule;
-  the Dockerfile clones with `--recurse-submodules`, but verify with
+  is a known-good fallback that `server.py` can be layered on top of.
+- **`pdkb.planner` import or runtime error** — typically a missing runtime
+  dependency (`networkx` / `pygraphviz` / `graphviz`). All are installed in this
+  image; check the self-test output.
+- **Self-test finds no `.pdkbddl`** — the examples come from a git submodule.
+  The Dockerfile clones with `--recurse-submodules`; verify with
   `docker run --rm pdkb-epistemic bash -lc 'find /MEP -name "*.pdkbddl" | head'`.
-- **Solves always time out / OOM** — raise `SOLVE_TIMEOUT` / `SOLVE_MEM_MB` (and
-  the container `--memory`) for a quick check, but keep them bounded in
+- **Solves always time out or OOM** — raise `SOLVE_TIMEOUT` / `SOLVE_MEM_MB`
+  (and the container `--memory`) for diagnosis, keeping them bounded in
   production.
+
+## Acknowledgement
+
+Developed with assistance from Claude Code, used to refine the design and the
+wording of the documentation and UI.
