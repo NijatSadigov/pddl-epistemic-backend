@@ -24,6 +24,7 @@ Safety model (important on a small / shared host):
     rest of the host.
 """
 
+import collections
 import json
 import os
 import re
@@ -31,6 +32,7 @@ import resource
 import signal
 import subprocess
 import tempfile
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -39,6 +41,35 @@ SOLVE_TIMEOUT = int(os.environ.get("SOLVE_TIMEOUT", "30"))
 SOLVE_MEM_MB = int(os.environ.get("SOLVE_MEM_MB", "600"))
 CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "*")
 MAX_BODY = 256 * 1024  # reject inputs larger than 256 KB
+
+# Per-IP rate limit for solve requests. This is the public entry point (the
+# fast-downward and EFP services are internal-only and reached through here), so
+# a simple sliding-window cap protects the host from a flood of solves.
+RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "20"))
+_RATE_HITS = collections.defaultdict(list)
+
+
+def _client_ip(handler):
+    forwarded = handler.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return handler.client_address[0]
+
+
+def _rate_limited(ip):
+    now = time.time()
+    hits = _RATE_HITS[ip]
+    cutoff = now - 60
+    while hits and hits[0] < cutoff:
+        hits.pop(0)
+    if not hits and ip in _RATE_HITS:
+        # keep the table small: drop idle IPs before re-adding
+        del _RATE_HITS[ip]
+        hits = _RATE_HITS[ip]
+    if len(hits) >= RATE_LIMIT_PER_MIN:
+        return True
+    hits.append(now)
+    return False
 
 # Bundled satisficing full-PDDL planners (LAPKT). They handle features pyperplan
 # cannot: negative preconditions, conditional effects, action costs. Requests
@@ -345,6 +376,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.rstrip("/")
+        if route in ("/solve", "/solve-classical", "/solve-efp"):
+            if _rate_limited(_client_ip(self)):
+                return self._json(
+                    429,
+                    {"ok": False, "error": "rate limit exceeded (max %d solves/min); "
+                     "please wait a moment" % RATE_LIMIT_PER_MIN},
+                )
         if route == "/solve":
             self._handle_solve(self._solve_epistemic)
         elif route == "/solve-classical":
