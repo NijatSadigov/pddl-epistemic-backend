@@ -2,7 +2,7 @@
 #
 # Builds Christian Muise's pdkb-planning (RP-MEP): it compiles a multi-agent
 # epistemic problem (PDKBDDL) into classical PDDL and solves it with the bundled
-# Fast Downward. A tiny dependency-free HTTP API (server.py) exposes POST /solve.
+# LAPKT BFWS planner. A tiny dependency-free HTTP API (server.py) exposes POST /solve.
 #
 # RAM SAFETY — always run with a hard container cap, e.g.
 #   docker run --rm -p 8000:8000 --memory=768m --memory-swap=768m pdkb-epistemic
