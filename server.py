@@ -65,6 +65,10 @@ FD_PLANNERS = {
     "fd-opt-blind": "opt-blind",
 }
 
+# EFP is a separate native epistemic planner (E-PDDL input). /solve-efp forwards
+# to it over the internal Docker network.
+EFP_SERVICE_URL = os.environ.get("EFP_SERVICE_URL", "http://efp:8000/solve")
+
 # The bundled pdkb planner reads its input files with the locale default encoding,
 # which on this image resolves to ASCII (the C.UTF-8 locale is not effective and
 # Python 3.6 has no UTF-8 mode). A single non-ASCII character — e.g. an em-dash or
@@ -282,6 +286,19 @@ def run_fd_proxy(domain_text, problem_text, planner_id):
     return result
 
 
+def run_efp_proxy(domain_text, problem_text):
+    """Forward an E-PDDL solve to the separate EFP service."""
+    payload = json.dumps({"domain": domain_text, "problem": problem_text}).encode("utf-8")
+    req = urllib.request.Request(
+        EFP_SERVICE_URL, data=payload, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=SOLVE_TIMEOUT + 25) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {"ok": False, "error": "EFP service unreachable: %s" % exc}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
@@ -332,6 +349,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_solve(self._solve_epistemic)
         elif route == "/solve-classical":
             self._handle_solve(self._solve_classical)
+        elif route == "/solve-efp":
+            self._handle_solve(self._solve_efp)
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -374,6 +393,17 @@ class Handler(BaseHTTPRequestHandler):
             "unknown planner %r; choose one of: %s"
             % (planner_id, ", ".join(sorted(list(CLASSICAL_PLANNERS) + list(FD_PLANNERS))))
         )
+
+    @staticmethod
+    def _solve_efp(data):
+        domain = data.get("domain")
+        problem = data.get("problem")
+        if (
+            not isinstance(domain, str) or not domain.strip()
+            or not isinstance(problem, str) or not problem.strip()
+        ):
+            raise ValueError('expected JSON {"domain": "<epddl>", "problem": "<epddl>"}')
+        return run_efp_proxy(domain, problem)
 
     def log_message(self, fmt, *args):
         # one terse line per request
