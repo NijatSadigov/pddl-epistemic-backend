@@ -54,6 +54,23 @@ CLASSICAL_PLANNERS = {
 }
 DEFAULT_CLASSICAL_PLANNER = "siw-then-bfsf"
 
+# The bundled pdkb planner reads its input files with the locale default encoding,
+# which on this image resolves to ASCII (the C.UTF-8 locale is not effective and
+# Python 3.6 has no UTF-8 mode). A single non-ASCII character — e.g. an em-dash or
+# smart quote pasted into a comment — would crash it. Inputs only ever carry
+# non-ASCII in comments, so they are transliterated to ASCII before use.
+_UNICODE_FIXUPS = {
+    "—": "-", "–": "-", "‒": "-", "−": "-",   # dashes
+    "‘": "'", "’": "'", "“": '"', "”": '"',   # smart quotes
+    "…": "...", "→": "->", "·": "-", " ": " ",  # misc
+}
+
+
+def to_ascii(text):
+    for uni, repl in _UNICODE_FIXUPS.items():
+        text = text.replace(uni, repl)
+    return text.encode("ascii", "ignore").decode("ascii")
+
 
 def _limit_memory():
     """preexec_fn: cap the solve subtree's virtual address space."""
@@ -103,10 +120,10 @@ def run_planner(pdkbddl_text):
     """Epistemic solve: compile PDKBDDL to classical PDDL and solve (pdkb-planning)."""
     workdir = tempfile.mkdtemp(prefix="solve-")
     path = os.path.join(workdir, "problem.pdkbddl")
-    # Always UTF-8: the container locale may be ASCII, and inputs can contain
-    # non-ASCII (e.g. an em-dash in a comment).
+    # The planner reads this file under an ASCII locale, so transliterate any
+    # non-ASCII (e.g. an em-dash in a comment) to ASCII before writing.
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(pdkbddl_text)
+        fh.write(to_ascii(pdkbddl_text))
 
     try:
         output, rc = run_capped(
@@ -165,9 +182,9 @@ def run_classical(domain_text, problem_text, planner_id):
     problem_path = os.path.join(workdir, "problem.pddl")
     plan_path = os.path.join(workdir, "plan.txt")
     with open(domain_path, "w", encoding="utf-8") as fh:
-        fh.write(domain_text)
+        fh.write(to_ascii(domain_text))
     with open(problem_path, "w", encoding="utf-8") as fh:
-        fh.write(problem_text)
+        fh.write(to_ascii(problem_text))
 
     try:
         output, rc = run_capped(
