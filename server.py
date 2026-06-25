@@ -6,8 +6,8 @@ Endpoints
   GET  /health           -> {"ok": true}
   POST /solve            {"pdkbddl": "<problem text>"}
                          -> epistemic solve via pdkb-planning
-  POST /solve-classical  {"domain": "<pddl>", "problem": "<pddl>"}
-                         -> full-PDDL classical solve via the bundled BFWS planner
+  POST /solve-classical  {"domain": "<pddl>", "problem": "<pddl>", "planner"?: "<id>"}
+                         -> full-PDDL classical solve via a selected bundled planner
 
 Both POST endpoints return:
   {"ok": bool, "plan": [...], "output": "<raw planner output>",
@@ -39,11 +39,20 @@ SOLVE_MEM_MB = int(os.environ.get("SOLVE_MEM_MB", "600"))
 CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "*")
 MAX_BODY = 256 * 1024  # reject inputs larger than 256 KB
 
-# Bundled satisficing full-PDDL planner (LAPKT BFWS family). Handles features
-# pyperplan cannot: negative preconditions, conditional effects, action costs.
-CLASSICAL_PLANNER = os.environ.get(
-    "CLASSICAL_PLANNER", "/MEP/pdkb-planning/pdkb/planners/siw-then-bfsf"
+# Bundled satisficing full-PDDL planners (LAPKT). They handle features pyperplan
+# cannot: negative preconditions, conditional effects, action costs. Requests
+# select one by id; the id is validated against this allowlist and the binary
+# path is never built from raw input.
+PLANNERS_DIR = os.environ.get(
+    "PLANNERS_DIR", "/MEP/pdkb-planning/pdkb/planners"
 )
+CLASSICAL_PLANNERS = {
+    "siw-then-bfsf": "siw-then-bfsf",
+    "bfws": "bfws",
+    "bfs_f": "bfs_f",
+    "siw": "siw",
+}
+DEFAULT_CLASSICAL_PLANNER = "siw-then-bfsf"
 
 
 def _limit_memory():
@@ -145,8 +154,12 @@ def parse_classical_stats(output):
     return stats
 
 
-def run_classical(domain_text, problem_text):
-    """Full-PDDL classical solve via the bundled BFWS planner."""
+def run_classical(domain_text, problem_text, planner_id):
+    """Full-PDDL classical solve via the selected bundled planner.
+
+    `planner_id` must be a validated key of CLASSICAL_PLANNERS.
+    """
+    planner_path = os.path.join(PLANNERS_DIR, CLASSICAL_PLANNERS[planner_id])
     workdir = tempfile.mkdtemp(prefix="classical-")
     domain_path = os.path.join(workdir, "domain.pddl")
     problem_path = os.path.join(workdir, "problem.pddl")
@@ -159,7 +172,7 @@ def run_classical(domain_text, problem_text):
     try:
         output, rc = run_capped(
             [
-                CLASSICAL_PLANNER,
+                planner_path,
                 "--domain", domain_path,
                 "--problem", problem_path,
                 "--output", plan_path,
@@ -171,6 +184,7 @@ def run_classical(domain_text, problem_text):
         return {
             "ok": False,
             "error": "timeout",
+            "planner": planner_id,
             "output": "Solve exceeded %d s and was stopped." % SOLVE_TIMEOUT,
         }
     finally:
@@ -180,6 +194,7 @@ def run_classical(domain_text, problem_text):
         return {
             "ok": False,
             "returncode": rc,
+            "planner": planner_id,
             "plan": [],
             "output": output[-20000:],
             "error": "no plan found (the goal may be unreachable or the PDDL uses "
@@ -188,6 +203,7 @@ def run_classical(domain_text, problem_text):
     return {
         "ok": True,
         "returncode": rc,
+        "planner": planner_id,
         "plan": plan,
         "stats": parse_classical_stats(output),
         "output": output[-20000:],
@@ -298,7 +314,13 @@ class Handler(BaseHTTPRequestHandler):
             or not isinstance(problem, str) or not problem.strip()
         ):
             raise ValueError('expected JSON {"domain": "<pddl>", "problem": "<pddl>"}')
-        return run_classical(domain, problem)
+        planner_id = data.get("planner") or DEFAULT_CLASSICAL_PLANNER
+        if planner_id not in CLASSICAL_PLANNERS:
+            raise ValueError(
+                "unknown planner %r; choose one of: %s"
+                % (planner_id, ", ".join(sorted(CLASSICAL_PLANNERS)))
+            )
+        return run_classical(domain, problem, planner_id)
 
     def log_message(self, fmt, *args):
         # one terse line per request
