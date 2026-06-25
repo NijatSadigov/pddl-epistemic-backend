@@ -31,6 +31,7 @@ import resource
 import signal
 import subprocess
 import tempfile
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -53,6 +54,16 @@ CLASSICAL_PLANNERS = {
     "siw": "siw",
 }
 DEFAULT_CLASSICAL_PLANNER = "siw-then-bfsf"
+
+# Fast Downward configurations are solved on the separate fast-downward service.
+# These client-facing planner ids map to that service's config ids; requests for
+# them are proxied over the internal Docker network.
+FD_SERVICE_URL = os.environ.get("FD_SERVICE_URL", "http://fast-downward:8000/solve")
+FD_PLANNERS = {
+    "fd-lama-first": "lama-first",
+    "fd-opt-lmcut": "opt-lmcut",
+    "fd-opt-blind": "opt-blind",
+}
 
 # The bundled pdkb planner reads its input files with the locale default encoding,
 # which on this image resolves to ASCII (the C.UTF-8 locale is not effective and
@@ -248,6 +259,29 @@ def _cleanup(workdir):
         pass
 
 
+def run_fd_proxy(domain_text, problem_text, planner_id):
+    """Forward a Fast Downward solve to the separate fast-downward service."""
+    payload = json.dumps({
+        "domain": domain_text,
+        "problem": problem_text,
+        "config": FD_PLANNERS[planner_id],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        FD_SERVICE_URL, data=payload, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=SOLVE_TIMEOUT + 25) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "planner": planner_id,
+            "error": "fast-downward service unreachable: %s" % exc,
+        }
+    result["planner"] = planner_id
+    return result
+
+
 class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
@@ -332,12 +366,14 @@ class Handler(BaseHTTPRequestHandler):
         ):
             raise ValueError('expected JSON {"domain": "<pddl>", "problem": "<pddl>"}')
         planner_id = data.get("planner") or DEFAULT_CLASSICAL_PLANNER
-        if planner_id not in CLASSICAL_PLANNERS:
-            raise ValueError(
-                "unknown planner %r; choose one of: %s"
-                % (planner_id, ", ".join(sorted(CLASSICAL_PLANNERS)))
-            )
-        return run_classical(domain, problem, planner_id)
+        if planner_id in CLASSICAL_PLANNERS:
+            return run_classical(domain, problem, planner_id)
+        if planner_id in FD_PLANNERS:
+            return run_fd_proxy(domain, problem, planner_id)
+        raise ValueError(
+            "unknown planner %r; choose one of: %s"
+            % (planner_id, ", ".join(sorted(list(CLASSICAL_PLANNERS) + list(FD_PLANNERS))))
+        )
 
     def log_message(self, fmt, *args):
         # one terse line per request
