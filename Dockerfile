@@ -1,13 +1,13 @@
-# Epistemic-planning solver backend for PDDL Playground (Phase 2).
+# Epistemic-planning solver backend for PDDL Playground.
 #
 # Builds Christian Muise's pdkb-planning (RP-MEP): it compiles a multi-agent
 # epistemic problem (PDKBDDL) into classical PDDL and solves it with the bundled
-# LAPKT BFWS planner. A tiny dependency-free HTTP API (server.py) exposes POST /solve.
+# LAPKT BFWS planner. A dependency-free HTTP API (server.py) exposes POST /solve.
 #
-# RAM SAFETY — always run with a hard container cap, e.g.
+# Run with a hard container memory cap, for example:
 #   docker run --rm -p 8000:8000 --memory=768m --memory-swap=768m pdkb-epistemic
-# The server additionally caps each solve's address space (SOLVE_MEM_MB) and
-# wall-clock time (SOLVE_TIMEOUT), so a runaway solve dies instead of the host.
+# The server also caps each solve's address space (SOLVE_MEM_MB) and wall-clock
+# time (SOLVE_TIMEOUT), so an oversized solve is killed before the host is.
 
 FROM ubuntu:18.04
 

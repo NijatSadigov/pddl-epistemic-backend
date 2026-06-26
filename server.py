@@ -13,15 +13,14 @@ Both POST endpoints return:
   {"ok": bool, "plan": [...], "output": "<raw planner output>",
    "returncode": int, "stats"?: {...}, "error"?: str}
 
-Safety model (important on a small / shared host):
-  * The server is SINGLE-THREADED, so solves run one at a time -- a natural queue
-    that prevents several planner processes from multiplying memory.
+Safety model (for a small, shared host):
+  * The server is single-threaded, so solves run one at a time. This forms a
+    queue that prevents several planner processes from multiplying memory.
   * Each solve runs in its own process group with an address-space rlimit
     (SOLVE_MEM_MB) and a wall-clock timeout (SOLVE_TIMEOUT). On timeout the whole
-    group is killed, so the planner cannot linger.
-  * Paired with a hard container memory cap (docker run --memory=...), each solve
-    is capped below that, so the solve dies under pressure, not the server or the
-    rest of the host.
+    group is killed.
+  * With a hard container memory cap (docker run --memory=...), each solve is
+    capped below that, so an oversized solve is killed before the host is.
 """
 
 import collections
@@ -102,9 +101,9 @@ EFP_SERVICE_URL = os.environ.get("EFP_SERVICE_URL", "http://efp:8000/solve")
 
 # The bundled pdkb planner reads its input files with the locale default encoding,
 # which on this image resolves to ASCII (the C.UTF-8 locale is not effective and
-# Python 3.6 has no UTF-8 mode). A single non-ASCII character — e.g. an em-dash or
-# smart quote pasted into a comment — would crash it. Inputs only ever carry
-# non-ASCII in comments, so they are transliterated to ASCII before use.
+# Python 3.6 has no UTF-8 mode). A single non-ASCII character (for example an
+# em-dash or smart quote pasted into a comment) would crash it, so input is
+# transliterated to ASCII before use.
 _UNICODE_FIXUPS = {
     "—": "-", "–": "-", "‒": "-", "−": "-",   # dashes
     "‘": "'", "’": "'", "“": '"', "”": '"',   # smart quotes
@@ -148,13 +147,13 @@ def run_capped(cmd, cwd):
 
 
 def parse_plan(output):
-    """Best-effort plan extraction from epistemic planner output.
+    """Extract the plan from epistemic planner output.
 
     `pdkb.planner` prints the plan after a `--{ Plan }--` banner, one numbered
     step per line: `1. (move_c_l1_l2)`. The plan section is scoped when present
-    and each action grabbed, tolerating the leading number; otherwise it falls
-    back to any bare parenthesised action lines. The full `output` is always
-    returned too, so nothing is lost if this misses.
+    and each action read, tolerating the leading number; otherwise this falls
+    back to any bare parenthesised action lines. The raw `output` is also
+    returned, so the full text is available if parsing does not match.
     """
     marker = re.search(r"--\{\s*Plan\s*\}--", output)
     section = output[marker.end():] if marker else output

@@ -1,12 +1,12 @@
-# PDDL Playground — Solver Backend
+# PDDL Playground - Solver Backend
 
 An HTTP service that provides two server-side planners for the PDDL Playground:
 
-- **Epistemic** — multi-agent epistemic planning. Wraps Christian Muise's
+- **Epistemic** - multi-agent epistemic planning. Wraps Christian Muise's
   [`pdkb-planning`](https://github.com/QuMuLab/pdkb-planning) (RP-MEP): a problem
   written in **PDKBDDL** is compiled to classical PDDL and solved with the
   bundled **LAPKT BFWS** planner (`siw-then-bfsf`).
-- **Classical (full PDDL)** — a satisficing classical solve via the same bundled
+- **Classical (full PDDL)** - a satisficing classical solve via the same bundled
   BFWS planner. It accepts PDDL features the in-browser `pyperplan` engine does
   not, including negative preconditions, conditional effects, and action costs.
 
@@ -67,7 +67,7 @@ proxy (see [Reverse proxy](#reverse-proxy)).
 |----------|---------|---------|
 | `SOLVE_TIMEOUT` | `30` | Per-solve wall-clock limit (seconds). |
 | `SOLVE_MEM_MB` | `600` | Per-solve address-space cap (MB). Kept below the container memory cap so a heavy solve is terminated before the container is. |
-| `CORS_ORIGIN` | — | Allowed origin for browser requests. Set to the Playground origin in production; `*` for testing only. |
+| `CORS_ORIGIN` | - | Allowed origin for browser requests. Set to the Playground origin in production; `*` for testing only. |
 | `CLASSICAL_PLANNER` | `/MEP/pdkb-planning/pdkb/planners/siw-then-bfsf` | Path to the bundled classical planner used by `/solve-classical`. |
 
 The container's `--memory` flag is a hard cap for the whole container and
@@ -108,7 +108,7 @@ built with `VITE_EPISTEMIC_API=https://epistemic.example.com`.
 
 ## Resource sizing
 
-The default limits suit small teaching problems (2–3 agents, low
+The default limits suit small teaching problems (2-3 agents, low
 knowledge-nesting depth). An oversized problem returns
 `{"ok": false, "error": "timeout"}` or is terminated under the memory cap rather
 than exhausting host memory. Solves are processed serially. On a memory-
@@ -119,7 +119,7 @@ workloads.
 
 All request bodies are limited to 256 KB.
 
-### `POST /solve` — epistemic
+### `POST /solve` - epistemic
 
 Body `{"pdkbddl": "<text>"}`. Compiles PDKBDDL to classical PDDL and solves it.
 
@@ -127,7 +127,7 @@ Body `{"pdkbddl": "<text>"}`. Compiles PDKBDDL to classical PDDL and solves it.
 { "ok": true, "plan": ["(action …)", "…"], "output": "<raw planner output>", "returncode": 0 }
 ```
 
-### `POST /solve-classical` — full PDDL
+### `POST /solve-classical` - full PDDL
 
 Body `{"domain": "<pddl>", "problem": "<pddl>"}`. Solves with the bundled BFWS
 planner.
@@ -155,18 +155,18 @@ Returns `{"ok": true}`.
 
 ## Troubleshooting
 
-- **Build fails on a `pip install`** — a pinned version may be unavailable for
+- **Build fails on a `pip install`** - a pinned version may be unavailable for
   the target architecture. The pins target Python 3.6 (Ubuntu 18.04); keep the
   base image at `18.04`. The upstream
   [official Dockerfile](https://github.com/QuMuLab/pdkb-planning/blob/master/Dockerfile)
   is a known-good fallback that `server.py` can be layered on top of.
-- **`pdkb.planner` import or runtime error** — typically a missing runtime
+- **`pdkb.planner` import or runtime error** - typically a missing runtime
   dependency (`networkx` / `pygraphviz` / `graphviz`). All are installed in this
   image; check the self-test output.
-- **Self-test finds no `.pdkbddl`** — the examples come from a git submodule.
+- **Self-test finds no `.pdkbddl`** - the examples come from a git submodule.
   The Dockerfile clones with `--recurse-submodules`; verify with
   `docker run --rm pdkb-epistemic bash -lc 'find /MEP -name "*.pdkbddl" | head'`.
-- **Solves always time out or OOM** — raise `SOLVE_TIMEOUT` / `SOLVE_MEM_MB`
+- **Solves always time out or OOM** - raise `SOLVE_TIMEOUT` / `SOLVE_MEM_MB`
   (and the container `--memory`) for diagnosis, keeping them bounded in
   production.
 
